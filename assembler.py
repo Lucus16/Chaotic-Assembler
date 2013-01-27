@@ -605,5 +605,7 @@ status messages")
     else:
         print('Unable to access: ' + outfile)
 
+    input('Press enter to continue...')
+
 
 
