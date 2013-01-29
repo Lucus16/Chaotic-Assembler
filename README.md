@@ -11,3 +11,7 @@ It uses it's own location as home location, relative paths should thus start fro
 You can also pass the input and output file as arguments from the command line, like so:
 
 assembler.py inputfile.dasm outputfile.bin
+
+Also try this for some other options:
+
+assembler.py -h
