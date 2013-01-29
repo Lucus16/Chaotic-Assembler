@@ -15,7 +15,7 @@ class assembler:
         try:
             with open(file, 'w') as f:
                 for line in lines:
-                    print(line, end='')
+                    f.write(line + '\n')
             return True
         except IOError:
             return False
@@ -83,6 +83,16 @@ class assembler:
         else:
             self.adderr('Label or define already exists: ' + label)
             return False
+
+    def datlines(self):
+        i = 0
+        r = []
+        while i < len(self.words):
+            t = 'dat '
+            t += ', '.join([self.tohex(x) for x in self.words[i:i + 8]])
+            r.append(t)
+            i += 8
+        return r
 
     def tohex(self, h, i = 4):
         return '0x' + '0' * (i - len(hex(h)) + 2) + hex(h)[2:]
@@ -732,10 +742,12 @@ class assembler:
 
 if __name__ == '__main__':
     parser = optparse.OptionParser()
-    parser.add_option('-q', '--quiet', help = "don't print errors, warnings or \
-status messages")
-    parser.add_option('-b', '--bigendian', help = "use big endian instead of \
-little endian for output")
+    parser.add_option('-q', '--quiet', action = 'store_true',
+        help = "don't print errors, warnings or status messages")
+    parser.add_option('-b', '--bigendian', action = 'store_true',
+        help = "use big endian instead of little endian for output")
+    parser.add_option('-d', '--datfile', action = 'store_true',
+        help = "create a file with dat statements instead of a binary file")
     options, args = parser.parse_args()
 
     if len(args) < 2:
@@ -746,10 +758,16 @@ little endian for output")
         outfile = args[1]
     
     a = assembler(infile, not options.quiet)
-    if a.writebin(outfile, a.words, not options.bigendian):
-        print('Binary stored in: ' + outfile)
+    if options.datfile:
+        if a.writefile(outfile, a.datlines()):
+            print('Dat file stored in: ' + outfile)
+        else:
+            print('Unable to access: ' + outfile)
     else:
-        print('Unable to access: ' + outfile)
+        if a.writebin(outfile, a.words, not options.bigendian):
+            print('Binary stored in: ' + outfile)
+        else:
+            print('Unable to access: ' + outfile)
 
     input('Press enter to continue...')
 
