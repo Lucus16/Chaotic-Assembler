@@ -83,7 +83,136 @@ class assembler:
         else:
             self.adderr('Label or define already exists: ' + label)
             return False
-    
+
+    def tohex(self, h, i = 4):
+        return '0x' + '0' * (i - len(hex(h)) + 2) + hex(h)[2:]
+
+    def checkassembly(self):
+        def tolen(s, i):
+            return s + ' ' * (i - len(s))
+
+        last = 0
+        lastf = self.wordinfo[0][0]
+        i = -1
+        while i < len(self.words) - 1:
+            i += 1
+            if lastf != self.wordinfo[i][0]:
+                last = 0
+                lastf = self.wordinfo[i][0]
+            for l, n in list(self.labels.items()):
+                if n == i:
+                    print(self.tohex(i) + ': :' + l)
+            if self.wordinfo[i][1] == last:
+                continue
+            r = self.tohex(i) + ': '
+            tmp = self.disassemble(self.words[i:i + 3])[0]
+            r += tolen(tmp[0], 24)
+            while last < self.wordinfo[i][1] - 1:
+                last += 1
+                t = ' ' * 24 + self.getline(self.wordinfo[i][0], last).strip()
+                if t.strip():
+                    print(t)
+            r += self.getline(self.wordinfo[i]).strip()
+            last += 1
+            nul = input(r)
+
+    def compareassembly(self, file, t = 0):
+        def tolen(s, i):
+            return s + ' ' * (i - len(s))
+        
+        bina = self.words
+        binb = self.readbin(file, self.BE)
+        i = -1
+        j = -1
+        o = 0
+        while i < min(len(bina), len(binb)):
+            i += 1
+            j = i + o
+            r = self.tohex(i) + ': '
+            ta = self.disassemble(bina[i:i + 3])[0]
+            tb = self.disassemble(binb[j:j + 3])[0]
+            l = ta[2]
+            r += tolen(''.join([self.tohex(x)[2:] for x in bina[i:i + l]]), 14)
+            r += tolen(ta[0], 22)
+            r += tolen(''.join([self.tohex(x)[2:] for x in binb[j:j + l]]), 14)
+            r += tolen(tb[0], 22)
+            if r[8:44] == r[44:] or i < t:
+                print(r)
+                inp = ''
+            else:
+                inp = input(r)
+            if inp == '+':
+                o += 1
+            elif inp == '-':
+                o -= 1
+            i += l - 1
+            
+            
+    def getline(self, file, line = None):
+        if line == None:
+            line = file[1]
+            file = file[0]
+        line -= 1
+        if file in self.filelines:
+            if line < len(self.filelines[file]):
+                return self.filelines[file][line]
+            else:
+                return ''
+        else:
+            tmp = self.readfile(file)
+            if tmp == None:
+                return ''
+            else:
+                self.filelines[file] = tmp
+                if line < len(tmp):
+                    return tmp[line]
+                else:
+                    return ''
+
+    def disassemble(self, source, start = 0):
+        r = []
+        i = start - 1
+        while i < len(source) - 1:
+            i += 1
+            o = i
+            op = source[i] & 31
+            b = (source[i] >> 5) & 31
+            a = (source[i] >> 10) & 63
+            sop = self.opcodes[op]
+            if sop == 'spc':
+                sop = self.spcops[b]
+                if sop == 'nul':
+                    r.append(('dat ' + self.tohex(source[i]), o, i - o + 1))
+                    continue
+                sa = self.values[a]
+                if 'nw' in sa:
+                    i += 1
+                    if i == len(source):
+                        return r
+                    sa = sa.replace('nw', str(self.tohex(source[i], 1)))
+                r.append((sop + ' ' + sa, o, i - o + 1))
+            elif sop == 'nul':
+                r.append(('dat ' + self.tohex(source[i]), o, i - o + 1))
+            else:
+                sa = self.values[a]
+                sb = self.values[b]
+                if sa == 'poppush':
+                    sa = 'pop'
+                if sb == 'poppush':
+                    sb = 'push'
+                if 'nw' in sa:
+                    i += 1
+                    if i == len(source):
+                        return r
+                    sa = sa.replace('nw', str(self.tohex(source[i], 1)))
+                if 'nw' in sb:
+                    i += 1
+                    if i == len(source):
+                        return r
+                    sb = sb.replace('nw', str(self.tohex(source[i], 1)))
+                r.append((sop + ' ' + sb + ', ' + sa, o, i - o + 1))
+        return r
+
     def stringtodat(self, string):
         # "" two chars per word
         # '' one char per word
@@ -125,7 +254,6 @@ class assembler:
             if lenpf:
                 r = [l] + r
             return str(r)[1:-1]
-        
     
     def printreport(self):
         if not self.errors and not self.warnings:
@@ -144,70 +272,63 @@ class assembler:
     def printlines(self):
         b = [print(i[0]) for i in self.lines]
 
+    regpm = re.compile(r'(.*\+)?\s*([abcxyzij])\s*([+-].*)?\Z')
     def argval(self, arg, a = False):
-        regs = list('abcxyzij')
-        specs = ['sp', 'pc', 'ex']
-        if arg in regs:
-            return (regs.index(arg),)
-        m = re.match(r'\[[ \t]*([abcxyzij])[ \t]*\]$', arg)
-        if m:
-            return (regs.index(m.group(1)) + 8,)
-        m = re.match(r'\[[ \t]*([abcxyzij])[ \t]*([+-])(.*)\]$', arg)
-        if m:
-            tmp = self.parse(m.group(3))
-            if tmp == None:
-                return (regs.index(m.group(1)) + 16, 0)
-            else:
-                if m.group(2) == '+':
-                    return (regs.index(m.group(1)) + 16, int(tmp))
+        if arg[0] == '[' and arg[-1] == ']':
+            #[ arg ]
+            arg = arg[1:-1].strip()
+            if arg in self.vals2:
+                return (self.vals2[arg],)
+            m = self.regpm.match(arg)
+            if m:
+                g = [m.group(1), m.group(2), m.group(3)]
+                if g[0] == None and g[2] == None:
+                    return 0
+                tmp1 = 0 if g[0] == None else self.parse(g[0].strip()[:-1])
+                tmp2 = 0 if g[2] == None else self.parse(g[2].strip()[1:])
+                if tmp1 == None or tmp2 == None: return 1
+                g[2] = '+' if g[2] == None else g[2].strip()
+                r = 'abcxyzij'.index(g[1])
+                if g[2][0] == '+':
+                    return (r + 16, (tmp1 + tmp2) % 65536)
                 else:
-                    return (regs.index(m.group(1)) + 16, (65536 - int(tmp)) % 65536)
-        if a:
-            m = re.match(r'(?:pop)|(?:\[[ \t]*sp[ \t]*\+\+[ \t]*\])', arg)
-        else:
-            m = re.match(r'(?:push)|(?:\[[ \t]*--[ \t]*sp[ \t]*\])', arg)
-        if m:
-            return (24,)
-        m = re.match(r'(?:\[[ \t]*sp[ \t]*\])|(?:peek)', arg)
-        if m:
-            return (25,)
-        m = re.match(r'\[[ \t]*sp[ \t]*([+-])(.*)\]', arg)
-        if m:
-            tmp = self.parse(m.group(2))
-            if tmp == None:
-                return (26, 0)
-            else:
-                if m.group(1) == '+':
-                    return (26, int(tmp))
+                    return (r + 16, (tmp1 - tmp2) % 65536)
+            if a: m = re.match(r'sp\s*\+\+\Z', arg)
+            else: m = re.match(r'--\s*sp\Z', arg)
+            if m: return (24,)
+            m = re.match(r'\[[ \t]*sp[ \t]*([+-])(.*)\]', arg)
+            if m:
+                tmp = self.parse(m.group(2))
+                if tmp == None: return 1
                 else:
-                    return (26, (65536 - int(tmp)) % 65536)
-        m = re.match(r'pick[ \t](.*)', arg)
-        if m:
-            tmp = self.parse(m.group(1))
-            if tmp == None:
-                return (26, 0)
-            else:
-                return (26, int(tmp))
-        if arg in specs:
-            return (27 + specs.index(arg),)
-        m = re.match(r'\[(.*)\]', arg)
-        if m:
-            tmp = self.parse(m.group(1))
-            if tmp == None:
-                return (30, 0)
-            else:
-                return (30, int(tmp))
-        tmp = self.parse(arg)
-        m = self.keyre.search(' ' + arg)
-        if tmp == None:
-            return (31, 0)
+                    if m.group(1) == '+':
+                        return (26, tmp % 65536)
+                    else:
+                        return (26, (65536 - tmp) % 65536)
+            tmp = self.parse(arg)
+            if tmp == None: return 1
+            return (30, tmp)
         else:
-            tmp = int(tmp)
-            if a and (tmp <= 30 or tmp == 65535) and not m:
-                return ((tmp + 33) % 65536,)
+            #arg
+            if (arg == 'pop' and not a) or (arg == 'push' and a):
+                return 0
+            if arg in self.vals1:
+                return (self.vals1[arg],)
+            m = re.match(r'pick\s+(.*)', arg)
+            if m:
+                tmp = self.parse(m.group(1))
+                if tmp == None: return 1
+                else: return (26, tmp % 65536)
+            tmp = self.parse(arg)
+            m = self.keyre.search(' ' + arg)
+            if tmp == None: return 1
             else:
-                return (31, tmp)
-        return (-1,)
+                tmp = tmp % 65536
+                if a and (tmp <= 30 or tmp == 65535) and not m:
+                    return ((tmp + 33) % 65536,)
+                else:
+                    return (31, tmp)
+            return 0
     
     def arglen(self, arg, a = False):
         #arg is assumed to be .strip().lower()ed
@@ -291,17 +412,19 @@ class assembler:
 
     def reset(self):
         self.namespace = ''
-        self.errors = []     #(error, file, lineno)
-        self.warnings = []   #(warn, file, lineno)
-        self.lines = []      #(line, file, lineno)
-        self.defines = {}    #expr or val
-        self.labels = {}     #wordno
-        self.definelocs = {} #(file, lineno)
-        self.labellocs = {}  #(file, lineno)
+        self.errors = []        #(error, file, lineno)
+        self.warnings = []      #(warn, file, lineno)
+        self.lines = []         #(line, file, lineno)
+        self.defines = {}       #expr or val
+        self.labels = {}        #wordno
+        self.definelocs = {}    #(file, lineno)
+        self.labellocs = {}     #(file, lineno)
         self.file = ''
         self.lineno = 0
         self.basefile = ''
         self.words = []
+        self.wordinfo = []      #(file, lineno)
+        self.filelines = {}     #dictionary of filelines
 
     #CONSTANTS
     opcodes = ['spc', 'set', 'add', 'sub', 'mul', 'mli', 'div', 'dvi',
@@ -316,10 +439,15 @@ class assembler:
               '[a]', '[b]', '[c]', '[x]', '[y]', '[z]', '[i]', '[j]',
               '[a+nw]', '[b+nw]', '[c+nw]', '[x+nw]',
               '[y+nw]', '[z+nw]', '[i+nw]', '[j+nw]',
-              'poppush', 'peek', 'pick nw', 'sp', 'pc', 'ex', '[nw]', 'nw'] + \
+              'poppush', 'peek', '[sp+nw]', 'sp', 'pc', 'ex', '[nw]', 'nw'] + \
               [str(i) for i in range(-1, 31)]
     reserved = ['a', 'b', 'c', 'x', 'y', 'z', 'i', 'j', 'pc', 'sp', 'ex',
                 'peek', 'pick', 'push', 'pop']
+    vals1 = {'a': 0, 'b': 1, 'c': 2, 'x': 3, 'y': 4, 'z': 5, 'i': 6, 'j': 7,
+             'pop': 24, 'push': 24, 'peek': 25, 'sp': 27, 'pc': 28,
+             'ex': 29}
+    vals2 = {'a': 8, 'b': 9, 'c': 10, 'x': 11, 'y': 12, 'z': 13,
+             'i': 14, 'j': 15, 'sp': 25}
     LE = True
     BE = False
 
@@ -341,12 +469,12 @@ class assembler:
     labelm = re.compile(r'(?:(:[A-Za-z_.][A-Za-z0-9_.]*)(?:(?:[\s]+(.*))|\Z))')
     label2m = re.compile(r'(?:([A-Za-z_.][A-Za-z0-9_.]*:)(?:(?:[\s]+(.*))|\Z))')
     wsre = re.compile(r'[\s]+')
-    datm = re.compile(r'(?:((?::[A-Za-z_.][A-Za-z0-9_.]*)|' +
-                      r'(?:[A-Za-z_.][A-Za-z0-9_.]*:))[\s]+)?\.?dat[\s]')
+    datm = re.compile(r'(?:((?::[a-z_.][a-z0-9_.]*)|' +
+                      r'(?:[a-z_.][a-z0-9_.]*:))\s+)?\.?dat\s', re.IGNORECASE)
     notwsre = re.compile(r'[^\s]+')
-    definem = re.compile(r'[.#]define[\s]')
-    reservem = re.compile(r'[.#]reserve[\s]')
-    includem = re.compile(r'[.#]include[\s]')
+    definem = re.compile(r'[.#]define[\s]', re.IGNORECASE)
+    reservem = re.compile(r'[.#]reserve[\s]', re.IGNORECASE)
+    includem = re.compile(r'[.#]include[\s]', re.IGNORECASE)
     
     
     def __init__(self, file = None, verbose = False):
@@ -354,7 +482,7 @@ class assembler:
         self.verbose = verbose
         if file:
             if verbose:
-                print('assembler.py is assembling: ' + file + '\n')
+                print('Chaotic Assembler is assembling: ' + file)
             self.basefile = file
             self.file = file
             self.lines = self.loadfile()
@@ -511,7 +639,7 @@ class assembler:
             except (TypeError, SyntaxError, NameError):
                 self.adderr('Failed to parse: ' + expr)
                 return None
-            return r
+            return int(r)
         for key in keys:
             if key in self.reserved:
                 self.adderr('Invalid key: ' + key)
@@ -545,12 +673,17 @@ class assembler:
         except (TypeError, SyntaxError, NameError):
             self.adderr('Failed to parse: ' + expr)
             return None
-        return r
+        return int(r)
 
     def assemble(self):
         #ASSUME:
         #opc argb, arga
         #dat arg, arg, arg, arg, ...
+        def check(a, m):
+            if a == 0 or a == 1:
+                self.adderr('Failed to parse: ' + m)
+                return [0] * (a + 1)
+            return a
         for line, self.file, self.lineno in self.lines:
             op = line[:3]
             if op == 'dat':
@@ -559,8 +692,10 @@ class assembler:
                     tmp = self.parse(arg)
                     if tmp == None:
                         self.words.append(0)
+                        self.wordinfo.append((self.file, self.lineno))
                     else:
                         self.words.append(tmp)
+                        self.wordinfo.append((self.file, self.lineno))
                 continue
             comma = line.find(', ')
             if comma == -1:
@@ -572,17 +707,26 @@ class assembler:
             if op in self.opcodes:
                 o = self.opcodes.index(op)
                 b, a = self.argval(argb), self.argval(arga, True)
+                a = check(a, arga)
+                b = check(b, argb)
                 self.words.append(o + 32 * b[0] + 1024 * a[0])
+                self.wordinfo.append((self.file, self.lineno))
                 if len(a) == 2:
                     self.words.append(a[1])
+                    self.wordinfo.append((self.file, self.lineno))
                 if len(b) == 2:
                     self.words.append(b[1])
+                    self.wordinfo.append((self.file, self.lineno))
             if op in self.spcops:
                 o = self.spcops.index(op)
                 a = self.argval(arga, True)
+                a = check(a, arga)
                 self.words.append(32 * o + 1024 * a[0])
+                self.wordinfo.append((self.file, self.lineno))
                 if len(a) == 2:
                     self.words.append(a[1])
+                    self.wordinfo.append((self.file, self.lineno))
+
 
 
 
@@ -590,6 +734,8 @@ if __name__ == '__main__':
     parser = optparse.OptionParser()
     parser.add_option('-q', '--quiet', help = "don't print errors, warnings or \
 status messages")
+    parser.add_option('-b', '--bigendian', help = "use big endian instead of \
+little endian for output")
     options, args = parser.parse_args()
 
     if len(args) < 2:
@@ -600,7 +746,7 @@ status messages")
         outfile = args[1]
     
     a = assembler(infile, not options.quiet)
-    if a.writebin(outfile, a.words, False):
+    if a.writebin(outfile, a.words, not options.bigendian):
         print('Binary stored in: ' + outfile)
     else:
         print('Unable to access: ' + outfile)
