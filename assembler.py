@@ -916,7 +916,7 @@ class assembler:
 
 
 
-if __name__ == '__main__:
+if __name__ == '__main__':
     parser = optparse.OptionParser()
     parser.add_option('-q', '--quiet', action = 'store_true',
         help = "don't print errors, warnings or status messages")
