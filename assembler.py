@@ -11,11 +11,11 @@ class assembler:
         except IOError:
             return None
 
-    def writefile(self, file, lines):
+    def writefile(self, file, lines, end = '\n'):
         try:
             with open(file, 'w') as f:
                 for line in lines:
-                    f.write(line + '\n')
+                    f.write(line + end)
             return True
         except IOError:
             return False
@@ -489,6 +489,8 @@ class assembler:
         self.macros = {}        #((args), (lines))
         self.success = False
         self.longform = False
+        self.makefooter = False
+        self.footerlist = []    #wordno's of words in need of relocation
 
     #CONSTANTS
     opcodes = ['spc', 'set', 'add', 'sub', 'mul', 'mli', 'div', 'dvi',
@@ -544,6 +546,8 @@ class assembler:
     alignm = re.compile(r'[.#]align\s', re.IGNORECASE)
     longformm = re.compile(r'[.#]longform', re.IGNORECASE)
     shortformm = re.compile(r'[.#]shortform', re.IGNORECASE)
+    binfooterm = re.compile(r'[.#]binfooter', re.IGNORECASE)
+    endfooterm = re.compile(r'[.#]endfooter', re.IGNORECASE)
     
     def __init__(self, file = None, verbose = False):
         self.reset()
@@ -785,9 +789,10 @@ class assembler:
                     else:
                         self.longform = True
                         line = '#longform'
+                    break
                 elif self.shortformm.match(line):
                     if line[10:].strip() != '':
-                        self.addwarn('Did not evaluate after .longform' +
+                        self.addwarn('Did not evaluate after .shortform' +
                                      line[10:].strip())
                     if not self.longform:
                         self.addwarn('Redundant .shortform, already in ' +
@@ -796,12 +801,46 @@ class assembler:
                     else:
                         self.longform = False
                         line = '#shortform'
+                    break
+                elif self.binfooterm.match(line):
+                    if line[10:].strip() != '':
+                        self.addwarn('Did not evaluate after .binfooter' +
+                                     line[10:].strip())
+                    if self.makefooter:
+                        self.addwarn('Already generating binfooter.')
+                    else:
+                        self.makefooter = True
+                    line = ''
+                    break
+                elif self.endfooterm.match(line):
+                    if line[10:].strip() != '':
+                        self.addwarn('Did not evaluate after .endfooter' +
+                                     line[10:].strip())
+                    if not self.makefooter:
+                        self.addwarn("Wasn't generating binfooter.")
+                    else:
+                        self.footerlist.extend([32, 0,
+                                                len(self.footerlist) + 3])
+                        line = 'dat ' + ', '.join(str(x) for x in
+                                                  self.footerlist)
+                        self.wordno += self.footerlist[-1]
+                        self.footerlist = []
+                        self.makefooter = False
+                    break
                 #add namespace to lines
                 line = self.localre.sub(lambda m: self.namespace + m.group(0),
                                         ' ' + line)[1:]
                 if line[0:1] != '#':
                     tmp = self.codelen(line, True)
                     if tmp:
+                        if self.makefooter:
+                            args = line[4:].split(',')
+                            wno = -1
+                            for arg in args:
+                                wno += 1
+                                tmp2 = self.keyre.findall(' ' + arg)
+                                if any(x not in self.reserved for x in tmp2):
+                                    self.footerlist.append(self.wordno + wno)
                         self.wordno += tmp[0]
                         line = tmp[1]
                     else:
@@ -935,16 +974,17 @@ if __name__ == '__main__':
         outfile = args[1]
     
     a = assembler(infile, not options.quiet)
-    if options.datfile:
-        if a.writefile(outfile, a.datlines()):
-            print('Dat file stored in: ' + outfile)
+    if a.success:
+        if options.datfile:
+            if a.writefile(outfile, a.datlines()):
+                print('Dat file stored in: ' + outfile)
+            else:
+                print('Unable to access: ' + outfile)
         else:
-            print('Unable to access: ' + outfile)
-    else:
-        if a.writebin(outfile, a.words, not options.bigendian):
-            print('Binary stored in: ' + outfile)
-        else:
-            print('Unable to access: ' + outfile)
+            if a.writebin(outfile, a.words, not options.bigendian):
+                print('Binary stored in: ' + outfile)
+            else:
+                print('Unable to access: ' + outfile)
 
     input('Press enter to continue...')
 
