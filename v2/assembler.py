@@ -956,6 +956,7 @@ class assembler:
 
 
 if __name__ == '__main__':
+    dowait = True
     parser = optparse.OptionParser()
     parser.add_option('-q', '--quiet', action = 'store_true',
         help = "don't print errors, warnings or status messages")
@@ -966,13 +967,18 @@ if __name__ == '__main__':
     #parser.add_option('-l', '--listing', help = "create a listing file")
     options, args = parser.parse_args()
 
-    if len(args) < 2:
+    if len(args) == 1:
+        infile = args[0]
+        tmp = args[0].rfind('.')
+        outfile = (args[0][:tmp] if tmp != -1 else args[0]) + '.bin'
+        dowait = False
+    elif len(args) < 2:
         infile = input('Enter input file: ')
         outfile = input('Enter output file: ')
     else:
         infile = args[0]
         outfile = args[1]
-    
+
     a = assembler(infile, not options.quiet)
     if a.success:
         if options.datfile:
@@ -986,7 +992,8 @@ if __name__ == '__main__':
             else:
                 print('Unable to access: ' + outfile)
 
-    input('Press enter to continue...')
+    if dowait and a.success:
+        input('Press enter to continue...')
 
 
 
