@@ -1,0 +1,128 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<language id="dasm" name="DASM" version="2.0" _section="Sources">
+ <metadata>
+  <property name="globs">*.dasm</property>
+  <property name="line-comment-start">;</property>
+ </metadata>
+ <styles>
+  <style id="comment" _name="Comment" map-to="def:comment"/>
+  <style id="instruction" _name="Instruction" map-to="def:statement"/>
+  <style id="sq-string" _name="String" map-to="def:string"/>
+  <style id="dq-string" _name="String" map-to="def:string"/>
+  <style id="escaped-character" _name="Escaped Character"/>
+  <style id="register" _name="Register" map-to="def:identifier"/>
+  <style id="operator" _name="Operator" map-to="def:special-char"/>
+  <style id="number" _name="Number" map-to="def:decimal"/>
+  <style id="preprocessor" _name="Preprocessor Command" map-to="def:preprocessor"/>
+ </styles>
+ <default-regex-options case-sensitive="false"/>
+ <definitions>
+  <context id="dasm" class="no-spell-check">
+   <include>
+    <context id="comment" style-ref="comment">
+     <start>;</start>
+     <end>$</end>
+    </context>
+    <context id="decimal" style-ref="number">
+     <match>-?[1-9][0-9]*</match>
+    </context>
+    <context id="hex" style-ref="number">
+    <match>-?0[xX][0-9a-fA-F]+</match>
+    </context>
+    <context id="operator" style-ref="operator">
+     <match extended="true">[\+\-\*\/\[\]\,\&lt;\&gt;\&amp;\|\^\(\)]|\=\=|
+     \&lt;\=|&gt;\=|\&gt;\&gt;|\&lt;\&lt;|and|or|not|\!\=</match>
+    </context>
+    <context id="preprocessor" style-ref="preprocessor">
+     <prefix>(\.|\#)</prefix>
+     <keyword>longform</keyword>
+     <keyword>shortform</keyword>
+     <keyword>reserve</keyword>
+     <keyword>define</keyword>
+     <keyword>macro</keyword>
+     <keyword>endmacro</keyword>
+     <keyword>include</keyword>
+     <keyword>align</keyword>
+     <keyword>binfooter</keyword>
+     <keyword>endfooter</keyword>
+    </context>
+    <context id="dat-statement" style-ref="preprocessor">
+     <prefix>(\.|\#)?</prefix>
+     <keyword>dat</keyword>
+    </context>
+    <context id="escape" style-ref="escaped-character">
+     <match>\\.</match>
+    </context>
+    <context id="sq-string" style-ref="sq-string">
+     <start>(l|p)?'</start>
+     <end>'(0|n|z|c)?</end>
+     <include>
+      <context ref="escape"/>
+     </include>
+    </context>
+    <context id="dq-string" style-ref="dq-string">
+     <start>(l|p)?"</start>
+     <end>"(0|n|z|c)?</end>
+     <include>
+      <context ref="escape"/>
+     </include>
+    </context>
+    <context id="register" style-ref="register">
+     <keyword>a</keyword>
+     <keyword>b</keyword>
+     <keyword>c</keyword>
+     <keyword>x</keyword>
+     <keyword>y</keyword>
+     <keyword>z</keyword>
+     <keyword>i</keyword>
+     <keyword>j</keyword>
+     <keyword>pc</keyword>
+     <keyword>sp</keyword>
+     <keyword>ex</keyword>
+     <keyword>peek</keyword>
+     <keyword>push</keyword>
+     <keyword>pop</keyword>
+    </context>
+    <context id="instruction" style-ref="instruction">
+     <keyword>set</keyword>
+     <keyword>add</keyword>
+     <keyword>sub</keyword>
+     <keyword>mul</keyword>
+     <keyword>div</keyword>
+     <keyword>mod</keyword>
+     <keyword>mli</keyword>
+     <keyword>dvi</keyword>
+     <keyword>mdi</keyword>
+     <keyword>shr</keyword>
+     <keyword>shl</keyword>
+     <keyword>asr</keyword>
+     <keyword>and</keyword>
+     <keyword>bor</keyword>
+     <keyword>xor</keyword>
+     <keyword>ifb</keyword>
+     <keyword>ifc</keyword>
+     <keyword>ife</keyword>
+     <keyword>ifn</keyword>
+     <keyword>ifg</keyword>
+     <keyword>ifl</keyword>
+     <keyword>ifa</keyword>
+     <keyword>ifu</keyword>
+     <keyword>sti</keyword>
+     <keyword>std</keyword>
+     <keyword>adx</keyword>
+     <keyword>sbx</keyword>
+     <keyword>jsr</keyword>
+     <keyword>int</keyword>
+     <keyword>iag</keyword>
+     <keyword>ias</keyword>
+     <keyword>iaq</keyword>
+     <keyword>rfi</keyword>
+     <keyword>hwi</keyword>
+     <keyword>hwq</keyword>
+     <keyword>hwn</keyword>
+    </context>
+   </include>
+  </context>
+ </definitions>
+</language>
+
