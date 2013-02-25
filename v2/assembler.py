@@ -776,25 +776,25 @@ class assembler:
                         self.wordno += tmp
                         break
                     elif tmp and tmp == 0:
-                        addwarn('Redundant statement: .reserve 0')
+                        self.addwarn('Redundant statement: .reserve 0')
                         line = ''
                         break
                     elif tmp:
-                        adderr("Can't reserve a negative amount: " + tmp)
+                        self.adderr("Can't reserve a negative amount: " + tmp)
                         line = ''
                         break
                     else:
-                        adderr('Could not solve expression: ' + line[9:])
+                        self.adderr('Could not solve expression: ' + line[9:])
                         line = ''
                         break
                 elif self.alignm.match(line):
                     tmp = self.parse(line[7:], [], False)
                     if tmp and tmp < self.wordno:
-                        adderr("Can't align to a previous address: " + tmp)
+                        self.adderr("Can't align to a previous address: " + tmp)
                         line = ''
                         break
                     elif tmp and tmp == self.wordno:
-                        addwarn('Redundant .align to current address')
+                        self.addwarn('Redundant .align to current address')
                         line = ''
                         break
                     elif tmp:
@@ -802,7 +802,7 @@ class assembler:
                         self.wordno = tmp
                         break
                     else:
-                        adderr('Could not solve expression: ' + line[7:])
+                        self.adderr('Could not solve expression: ' + line[7:])
                         line = ''
                         break
                 elif self.longformm.match(line):
