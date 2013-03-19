@@ -1,6 +1,49 @@
 import re
 
-class AssemblyObject:
+#Keep track of source line for every word
+#Generate result words for every source line afterwards
+
+#lex and parse file
+#do all includes
+#get all definitions
+#get all lengths and positions
+#give all tokens their position
+#get all data
+
+#instruction, preprocessor, data, labeldef
+
+class Lexer:
+    '''Do not use (), only (?:)'''
+    def __init__(self, rules):
+        self.rules = rules
+        self.names = [''] + [x[-1] for x in rules]
+        self.regex = re.compile('|'.join('(' + x[0] + ')' for x in rules))
+        assert not self.regex.match(''), \
+               'One of the provided rules matches the empty string.'
+
+    def lex(self, line):
+        self.line = line
+        self.pos = 0
+        self.end = len(line)
+
+    def next(self, ignorews=False):
+        tmp = next(self, None)
+        while ignorews and tmp and tmp[1] == 'whitespace':
+            tmp = next(self, None)
+        return tmp
+
+    def __next__(self):
+        if self.pos >= self.end:
+            raise StopIteration
+        match = self.regex.match(self.line, self.pos)
+        if match == None:
+            tmp = self.line[self.pos:]
+            self.pos = self.end
+            return (tmp, '')
+        self.pos = match.end()
+        return (match.group(), self.names[match.lastindex])
+
+class Assembler:
     def __init__(self, mainfile):
         assert isinstance(mainfile, str)
 
@@ -18,68 +61,12 @@ class AssemblyObject:
                 return None
         return self.files[filepath]
 
-    def addwarn(self, warning, *args):
-        if len(args) == 3:
-            #text, file, lineno
-            self.warnings.append((warning, args[0], args[1], args[2]))
-        elif len(args) == 2:
-            #text, token
-            self.warnings.append((warning, args[0], args[1].file,
-                                  args[1].lineno))
-        elif len(args) == 1:
-            #token
-            self.warnings.append((warning, args[0].text, args[0].file,
-                                  args[0].lineno))
-        elif len(args) == 0:
-            #global warning
-            self.warnings.append((warning, '', None, 0))
+    def adderr(*args):
+        self.warnings.append(Error(*args))
 
-    def pass100(self):
-        '''Load self.mainfile, create a list of Tokens, handle include Tokens,
-store in self.tokens.'''
-        def filetotokens(file, passed=[]):
-            tokens = []
-            eoltoken = re.match(r'(?P<eol>)', '')
-            self.lineno = 0
-            for line in file.lines:
-                line = stripcomments(line)
-                self.lineno += 1
-                if not line:
-                    continue
-                tokens.extend([Token(m, file, self.lineno) for m in
-                               tokenre.finditer(line)])
-                tokens.append(Token(eoltoken, file, self.lineno))
-                tmp = tokenre.sub('', line).strip()
-                if tmp != '':
-                    self.addwarn('unrecognized tokens', tmp, file, lineno)
-            index = -1
-            while True:
-                index += 1
-                self.token = tokens[index]
-                if self.token.type == 'ppinclude':
-                    nexttoken = tokens[index + 1]
-                    if nexttoken.type == 'string':
-                        tmp = eval(nexttoken.text)
-                        nexttoken.handled = True
-                        self.token.args.append(nexttoken)
-                        if tmp in passed:
-                            self.adderror('recursive include', self.token)
-                            continue
-                        else:
-                            tmp = self.getfile(tmp)
-                            newtokens = self.filetotokens(tmp, passed + [tmp])
-                            
+    def addwarn(*args):
+        self.errors.append(Warn(*args))
 
-
-class Token:
-    def __init__(self, match, file, lineno):
-        self.type = match.lastgroup
-        self.text = match.group(match.lastindex)
-        self.file = file
-        self.lineno = lineno
-        self.column = match.start()
-        self.handled = False
-        self.args = []
 
 
 class TextFile:
@@ -117,30 +104,42 @@ class TextFile:
         return self
 
 
-tokenre = re.compile(r'(?:\A|\s)(?:' +
-                     r'(?P<string>(?:[lp]?"(?:[^"\\]|(?:\\.))*"[0nzc]?)|' +
-                     r"(?:[lp]?'(?:[^'\\]|(?:\\.))*'[0nzc]?))|" +
-                     r'(?P<label>(?::[a-z_.][a-z0-9_.]*)|' +
-                     r'(?:[a-z_.][a-z0-9_.]*:))|' +
-                     r'(?P<ppreserve>[#.]reserve)|' +
-                     r'(?P<ppdefine>[#.]define)|' +
-                     r'(?P<ppinclude>[#.]include)|' +
-                     r'(?P<ppmacro>[#.]macro)|' +
-                     r'(?P<ppendmacro>[#.]endmacro)|' +
-                     r'(?P<ppalign>[#.]align)|' +
-                     r'(?P<pplongform>[#.]longform)|' +
-                     r'(?P<ppshortform>[#.]shortform)|' +
-                     r'(?P<ppbinfooter>[#.]binfooter)|' +
-                     r'(?P<ppendfooter>[#.]endfooter)|' +
-                     r'(?P<dat>[#.]?dat)|' +
-                     r'(?P<opcode>[a-z]{3})|' +
-                     r'(?P<comma>,)|' +
-                     r'(?P<expression>(?:-\s*)?(?:[a-z_.][a-z0-9_.]*|[0-9]+|' +
-                     r'0x[0-9a-f]+)(?:\s*(?:\*|\+|\-|\/|\^|' +
-                     r'\&|\||\=\=|\!\=|\<\=|\>\=|\<|\>|\>\>|\<\<|\%|' +
-                     r'and|or)\s*(?:-\s*)?(?:[a-z_.][a-z0-9_.]*|' +
-                     r'[0-9]+|0x[0-9a-f]+))*)' +
-                     r')(?=\s|\Z)', re.IGNORECASE)
+
+ppcommands = [
+    'reserve',
+    'define',
+    'include',
+    'macro',
+    'endmacro',
+    'align',
+    'longform',
+    'shortform',
+    'relocate',
+    'endrelocate',
+    ]
+rules = [
+    (r'\s+', 'whitespace'),
+    (r'(?:[lp]?"(?:[^"\\]|(?:\\.))*"[0nzc]?)|' +
+     r"(?:[lp]?'(?:[^'\\]|(?:\\.))*'[0nzc]?)", 'string'),
+    (r'(?::[a-z_.][a-z0-9_.]*)|(?:[a-z_.][a-z0-9_.]*:)', 'label'),
+    (r'[#.](?:' + '|'.join(ppcommands) + ')', 'preprocessor'),
+    (r'[#.]?dat', 'data'),
+    (r'set|add|sub|mul|div|mod|mli|dvi|mdi|and|bor|xor|shl|shr|asr|' +
+     r'ife|ifn|ifb|ifc|ifg|ifl|ifa|ifu|adx|sbx|sti|std', 'basic'),
+    (r'jsr|hwn|hwq|hwi|ias|iag|iaq|int|rfi', 'advanced'),
+    (r'a|b|c|x|y|z|i|j', 'register'),
+    ('pc'),
+    ('sp'),
+    ('ex'),
+    ('push'),
+    ('pop'),
+    ('peek'),
+    ('pick'),
+    (r'[a-z_.][a-z0-9_.]*', 'identifier'),
+    (r'(?:0x[0-9a-f]+)|(?:[0-9]+)', 'number'),
+    (r'\=\=|\<\=|\>\=|\<\<|\>\>|\!\=|\&\&|\|\||' +
+     r'\||\!|\~|\^|\&|\%|\*|\/|\-|\+', 'operator'),
+    ] + [('\\' + c, c) for c in ',$()[]{}']
 
 def splitpath(filepath):
     sl = max(filepath.find('/'), filepath.find('\\'))
@@ -162,3 +161,61 @@ def stripcomments(self, s):
     scl = re.sub(self.stringre,
                  lambda x: len(x.group(0)) * '-', s).find(';')
     return s.strip() if scl == -1 else s[:scl].strip()
+
+#TO BE ORDERED
+
+def getnext():
+    nxt = next(lexer)
+    if isinstance(nxt, str):
+        raise LexError, nxt
+    return nxt
+
+while True:
+    nxt = getnext()
+    if nxt[1] in ['opcode', 'preprocessor', 'labeldef', 'data']:
+        self.tokens.append(Token.new(nxt))
+    else:
+        self.tokens[-1].addarg(self.getarg(nxt))
+    if getnext() != 'whitespace':
+        raise ParseError, 'Whitespace expected.'
+
+
+#0: Lex and Parse mainfile
+#1: Find all includes and expand them
+#2: Find all macros and definitions
+#3: Get all lengths and set all positions
+#4: Get all words
+
+class Statement:
+    def __init__(self):
+        self.text = ''
+        self.args = []
+
+    def addarg(self, arg):
+        self.args.append(arg)
+
+    def setposition(self, position):
+        self.position = position
+
+    def getlength(self):
+        raise NotImplementedError
+
+    def getwords(self):
+        raise NotImplementedError
+
+    def new(token):
+        pass
+
+class Instruction(Statement):
+    def __init__(self, text, assembler):
+        self.text = text
+        self.lineno = assembler.lineno
+        self.file = assembler.file
+
+    def addarg(self):
+        pass
+
+
+
+
+
