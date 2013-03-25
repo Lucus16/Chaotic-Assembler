@@ -22,6 +22,7 @@ class Lexer:
                'One of the provided rules matches the empty string.'
 
     def lex(self, line):
+        self.history = []
         self.line = line
         self.pos = 0
         self.end = len(line)
@@ -32,9 +33,15 @@ class Lexer:
             tmp = next(self, None)
         return tmp
 
+    def back(self, number):
+        self.pos = self.history[-number]
+        self.history = self.history[:-number]
+        return self
+
     def __next__(self):
         if self.pos >= self.end:
             raise StopIteration
+        self.history.append(self.pos)
         match = self.regex.match(self.line, self.pos)
         if match == None:
             tmp = self.line[self.pos:]
@@ -42,6 +49,9 @@ class Lexer:
             return (tmp, '')
         self.pos = match.end()
         return (match.group(), self.names[match.lastindex])
+
+    def isempty(self):
+        return self.pos >= self.end
 
 class Assembler:
     def __init__(self, mainfile):
@@ -51,6 +61,9 @@ class Assembler:
         self.files = {}
         self.errors = []
         self.warnings = []
+        
+        self.statements = self.parse(self.mainfile) #May raise IOError
+        
 
     def getfile(self, filepath):
         if filepath not in self.files:
@@ -66,6 +79,31 @@ class Assembler:
 
     def addwarn(*args):
         self.errors.append(Warn(*args))
+
+    def parse(self, file):
+        file = self.getfile(file) #May raise IOError
+        lex = Lexer(rules)
+        stmts = []
+        lineno = 0
+        
+        for line in file.lines:
+            lineno += 1
+            lex.lex(stripcomments(line))
+            while not lex.isempty():
+                token = next(lex, None)
+                if token[1] in ['basic', 'advanced', 'label', 'preprocessor',
+                                'data']:
+                    stmts.append(Statement.new(token, file, lineno))
+                else:
+                    stmts[-1].addarg(lex.back(1))
+        
+        stmts2 = []
+        for stmt in stmts:
+            if isinstance(stmt, Include):
+                stmts2.extend(self.parse(stmt.args[0]))
+            else:
+                stmts2.append(stmt)
+        return stmts2
 
 
 
@@ -110,7 +148,6 @@ ppcommands = [
     'define',
     'include',
     'macro',
-    'endmacro',
     'align',
     'longform',
     'shortform',
@@ -141,6 +178,10 @@ rules = [
      r'\||\!|\~|\^|\&|\%|\*|\/|\-|\+', 'operator'),
     ] + [('\\' + c, c) for c in ',$()[]{}']
 
+##values = ['a', 'b', 'c', 'x', 'y', 'z', 'i', 'j', '[a]', '[b]', '[c]', '[x]',
+##          '[y]', '[z]', '[i]', '[j]', '[a+n]', '[b+n]', '[c+n]', '[x+n]',
+##          '[y+n]', '[z+n]', '[i+n]', '[j+n]', 
+
 def splitpath(filepath):
     sl = max(filepath.find('/'), filepath.find('\\'))
     if sl == -1:
@@ -162,22 +203,49 @@ def stripcomments(self, s):
                  lambda x: len(x.group(0)) * '-', s).find(';')
     return s.strip() if scl == -1 else s[:scl].strip()
 
-#TO BE ORDERED
+def getexpr(lex):
+    expect = True
+    text = ''
+    while True:
+        token = next(lex, None)
+        if token == None:
+            if expect:
+                #add parsing error
+                return text
+            else:
+                return text
+        if expect:
+            if token[1] == '(':
+                text += token[0]
+            elif token[0] in ['+', '-', '~']: #unary operator
+                text += token[0]
+            elif token[1] in ['string', 'identifier', 'number', '$']:
+                text += token[0]
+                expect = False
+            else:
+                lex.back(1)
+                #add parsing error
+        else:
+            if token[1] == ')':
+                text += token[0]
+            elif token[1] == 'operator':
+                text += token[0]
+            else:
+                lex.back(1)
+                return text #done parsing this expression
 
-def getnext():
-    nxt = next(lexer)
-    if isinstance(nxt, str):
-        raise LexError, nxt
-    return nxt
-
-while True:
-    nxt = getnext()
-    if nxt[1] in ['opcode', 'preprocessor', 'labeldef', 'data']:
-        self.tokens.append(Token.new(nxt))
-    else:
-        self.tokens[-1].addarg(self.getarg(nxt))
-    if getnext() != 'whitespace':
-        raise ParseError, 'Whitespace expected.'
+def getval(lex):
+    vals = {'a': 0, 'b': 1, 'c': 2, 'x': 3, 'y': 4, 'z': 5, 'i': 6, 'j': 7,
+            'push': 24, 'pop': 24, 'peek': 25, 'sp': 27, 'pc': 28, 'ex': 29}
+    text = ''
+    token = next(lex, None)
+    if token == None:
+        return
+    elif token[1] in ['register', 'push', 'pop', 'peek', 'sp', 'pc', 'ex']:
+        return (token[0], vals[token[0]]) #text, value
+    elif token[1] == 'pick':
+        pass
+    
 
 
 #0: Lex and Parse mainfile
@@ -187,8 +255,10 @@ while True:
 #4: Get all words
 
 class Statement:
-    def __init__(self):
-        self.text = ''
+    def __init__(self, text, file, lineno):
+        self.text = text
+        self.file = file
+        self.lineno = lineno
         self.args = []
 
     def addarg(self, arg):
@@ -203,17 +273,48 @@ class Statement:
     def getwords(self):
         raise NotImplementedError
 
-    def new(token):
-        pass
+    def new(token, file, lineno): #no self, call as Statement.new()
+        text, type_ = token
+        if type_ == 'basic' or type_ == 'advanced':
+            return Instruction(text, file, lineno)
+        if type_ == 'data':
+            return Data(text, file, lineno)
+        if type_ == 'label':
+            return Label(text, file, lineno)
+        if type_ == 'preprocessor':
+            if text == 'reserve':
+                return ppReserve(file, lineno)
+            if text == 'define':
+                return ppDefine(file, lineno)
+            if text == 'include':
+                return ppInclude(file, lineno)
+            if text == 'macro':
+                return ppMacro(file, lineno)
+            if text == 'align':
+                return ppAlign(file, lineno)
+            if text == 'falealign':
+                return ppFakealign(file, lineno)
+            if text == 'relocate':
+                return ppRelocate(file, lineno)
+            if text == 'endrelocate':
+                return ppEndrelocate(file, lineno)
+            if text == 'longform':
+                return ppLongform(file, lineno)
+            if text == 'shortform':
+                return ppShortform(file, lineno)
 
 class Instruction(Statement):
-    def __init__(self, text, assembler):
-        self.text = text
-        self.lineno = assembler.lineno
-        self.file = assembler.file
-
-    def addarg(self):
-        pass
+    def addarg(self, lex):
+        vals = {'a': 0, 'b': 1, 'c': 2, 'x': 3, 'y': 4, 'z': 5, 'i': 6, 'j': 7,
+                'push': 24, 'pop': 24, 'peek': 25, 'sp': 27, 'pc': 28, 'ex': 29}
+        argtext = ''
+        token = next(lex, None)
+        if token == None:
+            return
+        elif token[1] in ['register', 'push', 'pop', 'peek', 'sp', 'pc', 'ex']:
+            self.args.append((token[0], vals[token[0]])) #text, value
+        elif token[1] == 'pick':
+            pass
 
 
 
