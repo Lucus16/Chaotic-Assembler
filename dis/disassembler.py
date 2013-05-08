@@ -24,6 +24,7 @@ class disassembler:
             self.words = data
         elif data != None:
             raise TypeError('Expected string or list')
+        self.it = worditer(self.words)
 
     def loadfile(self, file):
         with open(file, 'rb') as f:
@@ -34,7 +35,9 @@ class disassembler:
         r = hex(val)
         return '0x' + (length + 2 - len(r)) * '0' + r[2:]
 
-    def getinstruction(self, it):
+    def getinstruction(self, it=None):
+        if it == None:
+            it = self.it
         def getarg(val, a=True):
             if a:
                 val = val >> 10
@@ -67,6 +70,7 @@ class disassembler:
         except StopIteration:
             pass
         return (out, l)
+    get = getinstruction
 
     def disassemble(self):
         it = worditer(self.words)
@@ -89,7 +93,7 @@ class disassembler:
                 out.append(n)
                 n = getnext()
         return out
-                
+    go = disassemble
 
 
 class worditer:
