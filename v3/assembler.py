@@ -1,3 +1,4 @@
+import disassembler
 import re
 
 #Keep track of source line for every word
@@ -14,26 +15,25 @@ import re
 
 class Lexer:
     '''Do not use (), only (?:)'''
-    def __init__(self, rules):
+    def __init__(self, rules, flags=0):
         self.rules = rules
         self.names = [''] + [x[-1] for x in rules]
-        self.regex = re.compile('|'.join('(' + x[0] + ')' for x in rules))
+        self.regex = re.compile('|'.join('(' + x[0] + ')' for x in rules),
+                                flags)
         assert not self.regex.match(''), \
                'One of the provided rules matches the empty string.'
+
+    def __iter__(self):
+        return self
 
     def lex(self, line):
         self.history = []
         self.line = line
         self.pos = 0
         self.end = len(line)
+        return self
 
-    def next(self, ignorews=False):
-        tmp = next(self, None)
-        while ignorews and tmp and tmp[1] == 'whitespace':
-            tmp = next(self, None)
-        return tmp
-
-    def back(self, number):
+    def back(self, number=1):
         self.pos = self.history[-number]
         self.history = self.history[:-number]
         return self
@@ -42,37 +42,38 @@ class Lexer:
         if self.pos >= self.end:
             raise StopIteration
         self.history.append(self.pos)
-        match = self.regex.match(self.line, self.pos)
-        if match == None:
-            tmp = self.line[self.pos:]
-            self.pos = self.end
-            return (tmp, '')
-        self.pos = match.end()
-        return (match.group(), self.names[match.lastindex])
+        while True:
+            match = self.regex.match(self.line, self.pos)
+            if match == None:
+                tmp = self.line[self.pos:]
+                self.pos = self.end
+                return tmp
+            self.pos = match.end()
+            if self.names[match.lastindex] != None:
+                return (match.group(), self.names[match.lastindex])
 
     def isempty(self):
         return self.pos >= self.end
 
 class Assembler:
-    def __init__(self, mainfile):
-        assert isinstance(mainfile, str)
-
-        self.mainfile = mainfile
+    def __init__(self, mainfile=None):
         self.files = {}
         self.errors = []
         self.warnings = []
         
-        self.statements = self.parse(self.mainfile) #May raise IOError
+        if mainfile != None:
+            assert isinstance(mainfile, str)
+            self.mainfile = mainfile
+            self.statements = self.process(self.load(self.mainfile))
+
+    def load(self, file):
+        lines = self.getfile(file).lines
         
 
-    def getfile(self, filepath):
-        if filepath not in self.files:
-            tmp = TextFile(filepath).read()
-            if tmp.success:
-                self.files[filepath] = tmp
-            else:
-                return None
-        return self.files[filepath]
+    def getfile(self, file):
+        if file not in self.files:
+            self.files[file] = DasmFile(file)
+        return self.files[file]
 
     def adderr(*args):
         self.warnings.append(Error(*args))
@@ -105,6 +106,20 @@ class Assembler:
                 stmts2.append(stmt)
         return stmts2
 
+
+class DasmFile:
+    def __init__(self, file=None, lines=None):
+        assert isinstance(file, (None, str))
+        assert isinstance(lines, (None, list))
+        
+        self.filepath = file
+        if lines != None:
+            self.lines = lines
+        elif file != None:
+            self.path, self.name, self.ext = splitpath(file)
+            self.filename = self.name + self.ext
+            with open(file, 'r') as f:
+                self.lines = [x.rstrip() for x in f.readlines()]
 
 
 class TextFile:
@@ -155,25 +170,25 @@ ppcommands = [
     'endrelocate',
     ]
 rules = [
-    (r'\s+', 'whitespace'),
-    (r'(?:[lp]?"(?:[^"\\]|(?:\\.))*"[0nzc]?)|' +
-     r"(?:[lp]?'(?:[^'\\]|(?:\\.))*'[0nzc]?)", 'string'),
+    (r'\s+', None),
+    (r'(?:[lp]?"(?:[^"\\]|(?:\\.))*"(?:[0nzc]\b)?)|' +
+     r"(?:[lp]?'(?:[^'\\]|(?:\\.))*'(?:[0nzc]\b)?)", 'string'),
     (r'(?::[a-z_.][a-z0-9_.]*)|(?:[a-z_.][a-z0-9_.]*:)', 'label'),
     (r'[#.](?:' + '|'.join(ppcommands) + ')', 'preprocessor'),
     (r'[#.]?dat', 'data'),
-    (r'set|add|sub|mul|div|mod|mli|dvi|mdi|and|bor|xor|shl|shr|asr|' +
-     r'ife|ifn|ifb|ifc|ifg|ifl|ifa|ifu|adx|sbx|sti|std', 'basic'),
-    (r'jsr|hwn|hwq|hwi|ias|iag|iaq|int|rfi', 'advanced'),
-    (r'a|b|c|x|y|z|i|j', 'register'),
-    ('pc'),
-    ('sp'),
-    ('ex'),
-    ('push'),
-    ('pop'),
-    ('peek'),
-    ('pick'),
+    (r'(?:set|add|sub|mul|div|mod|mli|dvi|mdi|and|bor|xor|shl|shr|asr|' +
+     r'ife|ifn|ifb|ifc|ifg|ifl|ifa|ifu|adx|sbx|sti|std)\b', 'basic'),
+    (r'(?:jsr|hwn|hwq|hwi|ias|iag|iaq|int|rfi)\b', 'advanced'),
+    (r'(?:a|b|c|x|y|z|i|j)\b', 'register'),
+    ('(?:pc)\b', 'pc'),
+    ('(?:sp)\b', 'pc'),
+    ('(?:ex)\b', 'ex'),
+    ('(?:push)\b', 'push'),
+    ('(?:pop)\b', 'pop'),
+    ('(?:peek)\b', 'peek'),
+    ('(?:pick)\b', 'pick'),
     (r'[a-z_.][a-z0-9_.]*', 'identifier'),
-    (r'(?:0x[0-9a-f]+)|(?:[0-9]+)', 'number'),
+    (r'(?:0b[0-1]+)|(?:0x[0-9a-f]+)|(?:[0-9]+)', 'integer'),
     (r'\=\=|\<\=|\>\=|\<\<|\>\>|\!\=|\&\&|\|\||' +
      r'\||\!|\~|\^|\&|\%|\*|\/|\-|\+', 'operator'),
     ] + [('\\' + c, c) for c in ',$()[]{}']
