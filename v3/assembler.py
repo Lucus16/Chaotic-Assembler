@@ -123,9 +123,21 @@ class Assembler:
                 statements.append(Statement.new(token))
             else:
                 statements[-1].addarg(token)
-        return statements
         #load, lex, parse and expand includes
         #get macros and defines
+        #set positions and get lengths
+        pos = 0
+        for statement in statements: #TODO: handle DummyStatement at start
+            statement.setposition(pos)
+            pos += statement.getlength()
+        #get words
+        words = []
+        for statement in statements:
+            words.extend(statement.getwords())
+        #get warnings and errors
+        return words
+        #TODO: Return an AssemblerData object with words, labelpositions,
+        #errors, warnings, statements, tokens, etc...
 
     def load(self, file):
         file = self.getfile(file)
