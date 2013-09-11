@@ -1,4 +1,4 @@
-import disassembler
+#import disassembler
 import re
 
 #Keep track of source line for every word
@@ -12,6 +12,37 @@ import re
 #get all data
 
 #instruction, preprocessor, data, labeldef
+
+class Source:
+    def __init__(self, file, line, column):
+        self.file = file
+        self.line = line
+        self.col = column
+
+    def __repr__(self):
+        return 'Source(' + repr(self.file) + ', ' + repr(self.line) + ', ' + \
+               repr(self.col) + ')'
+
+
+class Token:
+    def __init__(self, text, tokentype, source):
+        self.text = text
+        self.type = tokentype
+        self.source = source
+
+    def __repr__(self):
+        return 'Token(' + repr(self.text) + ', ' + repr(self.type) + ', ' + \
+               repr(self.source) + ')'
+
+
+class Line:
+    def __init__(self, text, source):
+        self.text = text
+        self.source = source
+
+    def __repr__(self):
+        return 'Line(' + repr(self.text) + ', ' + repr(self.source) + ')'
+
 
 class Lexer:
     '''Do not use (), only (?:)'''
@@ -28,9 +59,10 @@ class Lexer:
 
     def lex(self, line):
         self.history = []
-        self.line = line
+        self.line = line.text
+        self.src = line.source
         self.pos = 0
-        self.end = len(line)
+        self.end = len(self.line)
         return self
 
     def back(self, number=1):
@@ -45,12 +77,17 @@ class Lexer:
         while True:
             match = self.regex.match(self.line, self.pos)
             if match == None:
-                tmp = self.line[self.pos:]
                 self.pos = self.end
-                return tmp
+                return Line(self.line[self.history[-1]:],
+                        Source(self.src.file, self.src.line,
+                               self.src.col + self.history[-1]))
             self.pos = match.end()
             if self.names[match.lastindex] != None:
-                return (match.group(), self.names[match.lastindex])
+                return Token(match.group(), self.names[match.lastindex],
+                    Source(self.src.file, self.src.line,
+                           self.src.col + self.history[-1]))
+            else:
+                self.history[-1] = self.pos
 
     def isempty(self):
         return self.pos >= self.end
@@ -66,9 +103,42 @@ class Assembler:
             self.mainfile = mainfile
             self.statements = self.process(self.load(self.mainfile))
 
+    def assemble(self, file): #may be renamed lexandparse()
+        #load file, get lines
+        lines = self.load(file)
+        #lex lines, get tokens
+        tokens = []
+        for line in lines:
+            tmptokens = self.lex(line)
+            if isinstance(tmptokens[-1], Line):
+                tokens.extend(tmptokens[:-1])
+                #TODO: Generate error here.
+            else:
+                tokens.extend(tmptokens)
+        #parse tokens, get statements
+        statements = [DummyStatement()]
+        for token in tokens:
+            if token.type in ['label', 'preprocessor', 'basic', 'advanced',
+                              'data']:
+                statements.append(Statement.new(token))
+            else:
+                statements[-1].addarg(token)
+        return statements
+        #load, lex, parse and expand includes
+        #get macros and defines
+
     def load(self, file):
-        lines = self.getfile(file).lines
-        
+        file = self.getfile(file)
+        lines = file.lines
+        out = []
+        for i in range(len(lines)):
+            lines[i] = lines[i].rstrip()
+            tmp = len(lines[i])
+            lines[i] = lines[i].lstrip()
+            if lines[i]:
+                out.append(Line(lines[i], Source(file, i + 1,
+                    tmp - len(lines[i]) + 1)))
+        return out
 
     def getfile(self, file):
         if file not in self.files:
@@ -76,10 +146,14 @@ class Assembler:
         return self.files[file]
 
     def adderr(*args):
-        self.warnings.append(Error(*args))
+        self.errors.append(Error(*args))
 
     def addwarn(*args):
-        self.errors.append(Warn(*args))
+        self.warnings.append(Warn(*args))
+
+    def lex(self, line):
+        lex = Lexer(rules, re.IGNORECASE).lex(line)
+        return list(lex)
 
     def parse(self, file):
         file = self.getfile(file) #May raise IOError
@@ -109,8 +183,8 @@ class Assembler:
 
 class DasmFile:
     def __init__(self, file=None, lines=None):
-        assert isinstance(file, (None, str))
-        assert isinstance(lines, (None, list))
+        assert isinstance(file, str) or file is None
+        assert isinstance(lines, list) or lines is None
         
         self.filepath = file
         if lines != None:
@@ -121,11 +195,14 @@ class DasmFile:
             with open(file, 'r') as f:
                 self.lines = [x.rstrip() for x in f.readlines()]
 
+    def __repr__(self):
+        return 'DasmFile(' + repr(self.filepath) + ')'
+
 
 class TextFile:
     def __init__(self, filepath=None, lines=None):
-        assert isinstance(filepath, (None, str))
-        assert isinstance(lines, (None, list))
+        assert isinstance(filepath, str) or file is None
+        assert isinstance(lines, list) or lines is None
 
         self.lines = lines
         self.filepath = filepath
@@ -192,6 +269,8 @@ rules = [
     (r'\=\=|\<\=|\>\=|\<\<|\>\>|\!\=|\&\&|\|\||' +
      r'\||\!|\~|\^|\&|\%|\*|\/|\-|\+', 'operator'),
     ] + [('\\' + c, c) for c in ',$()[]{}']
+
+#Main types are label, preprocessor, basic, advanced, data
 
 ##values = ['a', 'b', 'c', 'x', 'y', 'z', 'i', 'j', '[a]', '[b]', '[c]', '[x]',
 ##          '[y]', '[z]', '[i]', '[j]', '[a+n]', '[b+n]', '[c+n]', '[x+n]',
@@ -268,12 +347,12 @@ def getval(lex):
 #2: Find all macros and definitions
 #3: Get all lengths and set all positions
 #4: Get all words
+#5: Get all warnings and errors
 
 class Statement:
-    def __init__(self, text, file, lineno):
+    def __init__(self, text, source):
         self.text = text
-        self.file = file
-        self.lineno = lineno
+        self.source = source
         self.args = []
 
     def addarg(self, arg):
@@ -288,14 +367,20 @@ class Statement:
     def getwords(self):
         raise NotImplementedError
 
-    def new(token, file, lineno): #no self, call as Statement.new()
-        text, type_ = token
+    def __repr__(self):
+        return 'Statement(' + repr(self.text) + ', ' + repr(self.source) + \
+               ', args=[' + ', '.join([repr(x) for x in self.args]) + '])'
+
+    def new(token): #no self, call as Statement.new()
+        text = token.text
+        type_ = token.type
+        source = token.source
         if type_ == 'basic' or type_ == 'advanced':
             return Instruction(text, file, lineno)
         if type_ == 'data':
             return Data(text, file, lineno)
         if type_ == 'label':
-            return Label(text, file, lineno)
+            return Label(text, source)
         if type_ == 'preprocessor':
             if text == 'reserve':
                 return ppReserve(file, lineno)
@@ -318,6 +403,11 @@ class Statement:
             if text == 'shortform':
                 return ppShortform(file, lineno)
 
+
+class Label(Statement):
+    pass
+
+
 class Instruction(Statement):
     def addarg(self, lex):
         vals = {'a': 0, 'b': 1, 'c': 2, 'x': 3, 'y': 4, 'z': 5, 'i': 6, 'j': 7,
@@ -332,6 +422,10 @@ class Instruction(Statement):
             pass
 
 
-
+class DummyStatement(Statement):
+    def __init__(self):
+        self.text = 'Dummy'
+        self.source = None
+        self.args = []
 
 
