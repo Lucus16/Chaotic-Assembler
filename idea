@@ -1,0 +1,31 @@
+Load main
+Lex main
+Parse main
+For each include:
+    load, lex, parse them
+    Expand the include statement
+
+
+load(file):         'main.dasm'
+return lines        [('add pc, 15', 'main.dasm', 1), ...]
+
+lex(line):          ('add pc, 15', 'main.dasm', 1)
+return tokens       ['main.dasm', 1, ('add', 'basic', 0), ('pc', 'pc', 4), ...]
+
+parse(tokens):      ^
+return statements   Instruction('add', 'main.dasm', 1, 0).addarg(('pc', 'pc', 4))
+
+handleincludes(statements): [... ppInclude('.include', 'main.dasm', 1, 0).addarg(('"mm.dasm"', 'string', 9)) ...]
+return statements           [... Instruction(...), ... Instruction(...), ...]
+
+For every statement:
+statement.passA()
+
+For every statement:
+statement.setloc().getlen()
+
+For every statement:
+statement.passB()
+
+For every statement:
+statement.getwords()
