@@ -23,6 +23,10 @@ class Source:
         return 'Source(' + repr(self.file) + ', ' + repr(self.line) + ', ' + \
                repr(self.col) + ')'
 
+    def __str__(self):
+        return self.file.filepath + ' ln' + str(self.line) + ' col' + \
+               str(self.col)
+
 
 class Token:
     def __init__(self, text, tokentype, source):
@@ -42,6 +46,28 @@ class Line:
 
     def __repr__(self):
         return 'Line(' + repr(self.text) + ', ' + repr(self.source) + ')'
+
+
+class Error:
+    def __init__(self, text, token):
+        self.text = text
+        self.token = token
+
+    def __repr__(self):
+        return 'Error(' + repr(self.text) + ', ' + repr(self.token) + ')'
+
+    def __str__(self):
+        return 'Error: ' + str(self.token.source) + ': ' + self.text + \
+               ': ' + self.token.text
+
+
+class Warning:
+    def __init__(self, text, token):
+        self.text = text
+        self.token = token
+
+    def __repr__(self):
+        return 'Warning(' + repr(self.text) + ', ' + repr(self.token) + ')'
 
 
 class Lexer:
@@ -92,29 +118,51 @@ class Lexer:
     def isempty(self):
         return self.pos >= self.end
 
+
+class AssemblerData:
+    def __init__(self):
+        self.success = False
+        self.errors = []
+        self.warnings = []
+
+    def __str__(self):
+        return 'Success: ' + str(self.success) + '\n' + \
+               'There were ' + str(len(self.warnings)) + ' warnings:\n' + \
+               '\n'.join([str(x) for x in self.warnings]) + \
+               'There were ' + str(len(self.errors)) + ' errors:\n' + \
+               '\n'.join([str(x) for x in self.errors])
+
+
 class Assembler:
     def __init__(self, mainfile=None):
         self.files = {}
-        self.errors = []
-        self.warnings = []
         
         if mainfile != None:
             assert isinstance(mainfile, str)
             self.mainfile = mainfile
             self.statements = self.process(self.load(self.mainfile))
 
-    def assemble(self, file): #may be renamed lexandparse()
+    def assemble(self, file):
+        ad = AssemblerData()
         #load file, get lines
-        lines = self.load(file)
+        try:
+            lines = self.load(file)
+        except IOError:
+            ad.success = False
+            ad.errors.append(Error('File IO error', Token(file,
+                'file', Source('__main__', 1, 0))))
+            return ad
+        ad.lines = lines
         #lex lines, get tokens
         tokens = []
         for line in lines:
             tmptokens = self.lex(line)
             if isinstance(tmptokens[-1], Line):
                 tokens.extend(tmptokens[:-1])
-                #TODO: Generate error here.
+                ad.errors.append(Error('Could not tokenize', tmptokens[-1]))
             else:
                 tokens.extend(tmptokens)
+        ad.tokens = tokens
         #parse tokens, get statements
         statements = [DummyStatement()]
         for token in tokens:
@@ -123,11 +171,14 @@ class Assembler:
                 statements.append(Statement.new(token))
             else:
                 statements[-1].addarg(token)
+        for x in statements[0].args:
+            ad.errors.append(Error('Argument before statement', x))
+        statements = statements[1:]
         #load, lex, parse and expand includes
         #get macros and defines
         #set positions and get lengths
         pos = 0
-        for statement in statements: #TODO: handle DummyStatement at start
+        for statement in statements:
             statement.setposition(pos)
             pos += statement.getlength()
         #get words
@@ -135,9 +186,12 @@ class Assembler:
         for statement in statements:
             words.extend(statement.getwords())
         #get warnings and errors
-        return words
-        #TODO: Return an AssemblerData object with words, labelpositions,
-        #errors, warnings, statements, tokens, etc...
+        for statement in statements:
+            ad.errors.extend(statement.errors)
+            ad.warnings.extend(statement.warnings)
+        #finish AssemblerData object and return it.
+        ad.words = words
+        return ad
 
     def load(self, file):
         file = self.getfile(file)
@@ -210,6 +264,9 @@ class DasmFile:
     def __repr__(self):
         return 'DasmFile(' + repr(self.filepath) + ')'
 
+    def __str__(self):
+        return '\n'.join(self.lines)
+
 
 class TextFile:
     def __init__(self, filepath=None, lines=None):
@@ -264,7 +321,7 @@ rules = [
      r"(?:[lp]?'(?:[^'\\]|(?:\\.))*'(?:[0nzc]\b)?)", 'string'),
     (r'(?::[a-z_.][a-z0-9_.]*)|(?:[a-z_.][a-z0-9_.]*:)', 'label'),
     (r'[#.](?:' + '|'.join(ppcommands) + ')', 'preprocessor'),
-    (r'[#.]?dat', 'data'),
+    (r'[#.]?data?', 'data'),
     (r'(?:set|add|sub|mul|div|mod|mli|dvi|mdi|and|bor|xor|shl|shr|asr|' +
      r'ife|ifn|ifb|ifc|ifg|ifl|ifa|ifu|adx|sbx|sti|std)\b', 'basic'),
     (r'(?:jsr|hwn|hwq|hwi|ias|iag|iaq|int|rfi)\b', 'advanced'),
@@ -366,6 +423,8 @@ class Statement:
         self.text = text
         self.source = source
         self.args = []
+        self.errors = []
+        self.warnings = []
 
     def addarg(self, arg):
         self.args.append(arg)
@@ -388,9 +447,9 @@ class Statement:
         type_ = token.type
         source = token.source
         if type_ == 'basic' or type_ == 'advanced':
-            return Instruction(text, file, lineno)
+            return Instruction(text, source)
         if type_ == 'data':
-            return Data(text, file, lineno)
+            return Data(text, source)
         if type_ == 'label':
             return Label(text, source)
         if type_ == 'preprocessor':
@@ -417,11 +476,75 @@ class Statement:
 
 
 class Label(Statement):
-    pass
+    def __init__(self, text, source):
+        self.text = text
+        self.source = source
+        self.args = []
+        self.errors = []
+        self.warnings = []
+
+    def addarg(self, token):
+        self.errors.append(Error('Label statement does not accept arguments',
+                                 token))
+
+    def setposition(self, pos):
+        self.pos = pos
+
+    def getlength(self):
+        return 0
+
+    def getwords(self):
+        return []
+
+
+class Data(Statement):
+    def __init__(self, text, source):
+        self.text = text
+        self.source = source
+        self.args = []
+        self.errors = []
+        self.warnings = []
+
+    def addarg(self, token):
+        self.args.append(token)
+
+    def setposition(self, pos):
+        self.pos = pos
+
+    def getlength(self):
+        try:
+            return self.len
+        except AttributeError:
+            self.len = len([x for x in self.args if x.type == ',']) + 1
+            return self.len
+
+    def getwords(self):
+        try:
+            return self.words
+        except AttributeError:
+            self.words = []
+            args = [[]]
+            for arg in self.args:
+                if arg.type == ',':
+                    args.append([])
+                else:
+                    args[-1].append(arg)
+                    
+            #old
+            self.words = []
+            argstr = ''.join([x.text for x in self.args])
+            args = argstr.split(',')
+            for x in args:
+                self.words.append(int(x, 0))
+            assert len(self.words) == self.len
+            return self.words
 
 
 class Instruction(Statement):
-    def addarg(self, lex):
+    def addarg(self, token):
+        pass
+
+    def somefn(self, lex):
         vals = {'a': 0, 'b': 1, 'c': 2, 'x': 3, 'y': 4, 'z': 5, 'i': 6, 'j': 7,
                 'push': 24, 'pop': 24, 'peek': 25, 'sp': 27, 'pc': 28, 'ex': 29}
         argtext = ''
